@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plymouth Harbor Conditions</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Courier New', Courier, monospace;
+  background: #08111f;
+  color: #7ecfff;
+  width: 350px;
+  height: 250px;
+  overflow: hidden;
+}
+.header {
+  background: #0d1f3c;
+  border-bottom: 1px solid #1a3d6e;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+}
+.header-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: #aad4ff;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.header-time {
+  font-size: 10px;
+  color: #3a7ab8;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 1px;
+  background: #112244;
+  height: 196px;
+}
+.cell {
+  background: #08111f;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.cell-label {
+  font-size: 8px;
+  color: #3a6a9a;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.cell-value {
+  font-size: 20px;
+  font-weight: bold;
+  color: #7ecfff;
+  line-height: 1;
+  white-space: nowrap;
+}
+.cell-sub {
+  font-size: 9px;
+  color: #3a6a9a;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.footer {
+  background: #050d18;
+  border-top: 1px solid #112244;
+  padding: 3px 9px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 24px;
+}
+.footer-src {
+  font-size: 8px;
+  color: #1a4a7a;
+  letter-spacing: 0.5px;
+}
+.footer-updated {
+  font-size: 8px;
+  color: #1a4a7a;
+}
+.dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #44cc88;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.dot.err { background: #ff5533; }
+.dim { color: #2a5a8a; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="header-title">&#9875; Plymouth Harbor</span>
+  <span class="header-time" id="clock">--:-- --</span>
+</div>
+
+<div class="grid">
+
+  <div class="cell">
+    <div class="cell-label">Wind</div>
+    <div class="cell-value" id="wind-spd">--</div>
+    <div class="cell-sub" id="wind-dir">mph &bull; --</div>
+  </div>
+
+  <div class="cell">
+    <div class="cell-label">Tide</div>
+    <div class="cell-value" id="tide-ht">--</div>
+    <div class="cell-sub" id="tide-next">-- ft MLLW</div>
+  </div>
+
+  <div class="cell">
+    <div class="cell-label">Pressure</div>
+    <div class="cell-value" id="pressure">--</div>
+    <div class="cell-sub" id="pressure-sub">mb</div>
+  </div>
+
+  <div class="cell">
+    <div class="cell-label">Waves</div>
+    <div class="cell-value" id="waves">--</div>
+    <div class="cell-sub">ft</div>
+  </div>
+
+  <div class="cell">
+    <div class="cell-label">Water Temp</div>
+    <div class="cell-value" id="water-temp">--</div>
+    <div class="cell-sub">&deg;F</div>
+  </div>
+
+  <div class="cell">
+    <div class="cell-label">Air Temp</div>
+    <div class="cell-value" id="air-temp">--</div>
+    <div class="cell-sub">&deg;F</div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <span class="footer-src"><span class="dot" id="dot"></span>NOAA &bull; NWS &bull; Plymouth, MA</span>
+  <span class="footer-updated" id="updated">Loading&hellip;</span>
+</div>
+
+<script>
+var TIDE_STATION   = '8446166';  // Plymouth Harbor tide predictions
+var MET_STATION    = '8443970';  // Boston — pressure + water level reference
+var LAT            = 41.9584;
+var LON            = -70.6673;
+var REFRESH_MS     = 6 * 60 * 1000;  // 6 minutes — matches NOAA update cycle
+
+var COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+var ARROWS  = ['↓','↙','←','↖','↑','↗','→','↘'];
+
+function degToCompass(d) { return COMPASS[Math.round(d / 22.5) % 16]; }
+function degToArrow(d)   { return ARROWS[Math.round(d / 45) % 8]; }
+
+function fmt12(dateStr) {
+  var d = new Date(dateStr);
+  return d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', hour12:true});
+}
+
+function set(id, html) {
+  var el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+
+function setDot(ok) {
+  var d = document.getElementById('dot');
+  if (d) { d.className = 'dot' + (ok ? '' : ' err'); }
+}
+
+function updateClock() {
+  set('clock', new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}));
+}
+
+function noaaURL(station, product, extra) {
+  return 'https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?' +
+    'station=' + station + '&product=' + product +
+    '&units=english&time_zone=lst_ldt&application=pyc_weather&format=json' +
+    (extra || '');
+}
+
+function fetchJ(url, cb) {
+  var x = new XMLHttpRequest();
+  x.open('GET', url);
+  x.onload = function() {
+    try { cb(null, JSON.parse(x.responseText)); } catch(e) { cb(e); }
+  };
+  x.onerror = function() { cb(new Error('network')); };
+  x.send();
+}
+
+function fetchPressure() {
+  fetchJ(noaaURL(MET_STATION, 'air_pressure', '&date=latest'), function(err, d) {
+    if (err || !d || !d.data) return;
+    var v = parseFloat(d.data[d.data.length - 1].v);
+    set('pressure', v.toFixed(1));
+    set('pressure-sub', 'mb &bull; ' + (v * 0.02953).toFixed(2) + ' inHg');
+  });
+}
+
+function fetchTidePredictions() {
+  var today = new Date();
+  var pad = function(n){return n<10?'0'+n:''+n;};
+  var ds = today.getFullYear()+pad(today.getMonth()+1)+pad(today.getDate());
+  fetchJ(noaaURL(TIDE_STATION, 'predictions', '&datum=MLLW&interval=hilo&begin_date='+ds+'&end_date='+ds+'&date='), function(err, d) {
+    if (err || !d || !d.predictions) return;
+    var now = Date.now();
+    var future = d.predictions.filter(function(p){ return new Date(p.t).getTime() > now; });
+    if (!future.length) return;
+    var next = future[0];
+    var isHigh = next.type === 'H';
+    var color = isHigh ? '#44ee88' : '#ff9944';
+    var arrow = isHigh ? '&#9650;' : '&#9660;';
+    set('tide-next', '<span style="color:'+color+'">'+arrow+(isHigh?' High ':' Low ')+fmt12(next.t)+'</span>');
+  });
+}
+
+function fetchWaterLevel() {
+  fetchJ(noaaURL(MET_STATION, 'water_level', '&date=latest&datum=MLLW'), function(err, d) {
+    if (err || !d || !d.data) return;
+    var v = parseFloat(d.data[d.data.length-1].v);
+    set('tide-ht', v.toFixed(1));
+  });
+}
+
+function fetchOpenMeteo() {
+  var url = 'https://api.open-meteo.com/v1/forecast?latitude='+LAT+'&longitude='+LON+
+    '&current=wind_speed_10m,wind_gusts_10m,wind_direction_10m,temperature_2m&wind_speed_unit=mph&temperature_unit=fahrenheit';
+  fetchJ(url, function(err, d) {
+    if (err || !d || !d.current) return;
+    var spd = Math.round(d.current.wind_speed_10m);
+    var gst = Math.round(d.current.wind_gusts_10m);
+    var dir = d.current.wind_direction_10m;
+    var compass = degToCompass(dir);
+    var arrow = degToArrow(dir);
+    set('wind-spd', spd + ' <span style="font-size:14px;color:#ffcc44">'+arrow+'</span>');
+    set('wind-dir', 'mph ' + compass + ' &bull; gust ' + gst);
+    set('air-temp', Math.round(d.current.temperature_2m));
+  });
+}
+
+function fetchMarine() {
+  var url = 'https://marine-api.open-meteo.com/v1/marine?latitude='+LAT+'&longitude='+LON+
+    '&current=wave_height,sea_surface_temperature&length_unit=imperial&temperature_unit=fahrenheit';
+  fetchJ(url, function(err, d) {
+    if (err || !d || !d.current) return;
+    if (d.current.wave_height != null) set('waves', d.current.wave_height.toFixed(1));
+    if (d.current.sea_surface_temperature != null) set('water-temp', Math.round(d.current.sea_surface_temperature));
+  });
+}
+
+function refresh() {
+  setDot(true);
+  fetchPressure();
+  fetchWaterLevel();
+  fetchTidePredictions();
+  fetchOpenMeteo();
+  fetchMarine();
+  var now = new Date();
+  set('updated', 'Updated ' + now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}));
+}
+
+setInterval(updateClock, 1000);
+updateClock();
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
